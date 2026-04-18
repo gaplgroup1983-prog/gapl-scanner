@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<title>GAPL Scanner</title>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+* { box-sizing:border-box; margin:0; padding:0; font-family:sans-serif; }
+
+body {
+  background:#0f0f1a;
+  min-height:100vh;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:flex-start;
+  padding:12px;
+}
+
+h2 {
+  color:#a78bfa;
+  font-size:0.9rem;
+  font-weight:700;
+  text-align:center;
+  margin-bottom:10px;
+  letter-spacing:0.05em;
+  text-transform:uppercase;
+}
+
+/* The div html5-qrcode renders into */
+#reader {
+  width:100%;
+  max-width:360px;
+  border-radius:16px;
+  overflow:hidden;
+  border:2px solid #7c5ebd;
+}
+
+/* Hide html5-qrcode's own UI chrome — we build our own */
+#reader__dashboard_section_swaplink,
+#reader__dashboard_section_fileselection,
+#reader__filescan_input,
+#html5-qrcode-anchor-scan-type-change { display:none !important; }
+
+#reader__scan_region { background:#000; }
+#reader__dashboard { padding:6px !important; background:#1a1a2e; }
+#reader__status_span {
+  color:#a78bfa !important;
+  font-size:0.75rem !important;
+  font-weight:600 !important;
+}
+
+/* Mode label */
+#modeLabel {
+  color:#fff;
+  font-size:0.85rem;
+  font-weight:600;
+  text-align:center;
+  margin:10px 0 6px;
+  background:#7c5ebd;
+  border-radius:20px;
+  padding:5px 18px;
+  display:inline-block;
+}
+
+/* Result flash */
+#resultBox {
+  display:none;
+  margin-top:10px;
+  background:#10b981;
+  color:#fff;
+  border-radius:12px;
+  padding:10px 14px;
+  font-size:0.85rem;
+  font-weight:700;
+  text-align:center;
+  width:100%;
+  max-width:360px;
+  word-break:break-all;
+}
+
+/* Buttons */
+.btn {
+  margin-top:10px;
+  width:100%;
+  max-width:360px;
+  padding:13px;
+  border:none;
+  border-radius:12px;
+  font-size:0.95rem;
+  font-weight:700;
+  cursor:pointer;
+  color:#fff;
+}
+.btn-purple { background:#7c5ebd; }
+.btn-green  { background:#10b981; }
+.btn-gray   { background:#374151; font-size:0.8rem; }
+
+#statusLine {
+  color:#6b7280;
+  font-size:0.72rem;
+  text-align:center;
+  margin-top:8px;
+}
+</style>
+</head>
+<body>
+
+<h2 id="modeLabel">📦 Scanning BIN</h2>
+
+<div id="reader"></div>
+
+<div id="resultBox"></div>
+
+<button class="btn btn-purple" id="switchBtn" onclick="switchMode()" style="display:none">
+  🔄 Switch to QR Scan
+</button>
+
+<button class="btn btn-gray" id="rescanBtn" onclick="resumeScan()" style="display:none">
+  ↩ Scan Again
+</button>
+
+<p id="statusLine">Waiting for camera permission...</p>
+
+<script>
+'use strict';
+
+// ── WHICH FIELD ARE WE SCANNING FOR? ──────────────────
+// Parent GAS page tells us via URL param or postMessage
+// Default: start with 'bin'
+let scanMode = 'bin';  // 'bin' or 'qr'
+let scanner  = null;
+let paused   = false;
+
+// Read mode from URL if parent passed it
+const urlParams = new URLSearchParams(window.location.search);
+if (urlParams.get('mode') === 'qr') {
+  scanMode = 'qr';
+}
+
+// Also listen for messages from parent GAS iframe
+window.addEventListener('message', function(e) {
+  if (e.data && e.data.type === 'SET_MODE') {
+    scanMode = e.data.mode; // 'bin' or 'qr'
+    updateModeLabel();
+    if (paused) resumeScan();
+  }
+});
+
+function updateModeLabel() {
+  document.getElementById('modeLabel').textContent =
+    scanMode === 'bin' ? '📦 Scanning BIN Barcode' : '🔲 Scanning QR / Part Code';
+  document.getElementById('switchBtn').textContent =
+    scanMode === 'bin' ? '🔄 Switch to QR Scan' : '🔄 Switch to BIN Scan';
+}
+
+// ── START SCANNER ──────────────────────────────────────
+window.addEventListener('load', () => {
+  updateModeLabel();
+  startScanner();
+});
+
+function startScanner() {
+  scanner = new Html5Qrcode('reader');
+
+  const config = {
+    fps: 12,
+    qrbox: { width: 240, height: 240 },
+    aspectRatio: 1.333,
+    supportedScanTypes: [Html5QrcodeScanType.SCAN_TYPE_CAMERA]
+  };
+
+  scanner.start(
+    { facingMode: 'environment' },
+    config,
+    onScanSuccess,
+    () => {} // silent per-frame error
+  )
+  .then(() => {
+    document.getElementById('statusLine').textContent = 'Camera active — point at code';
+    document.getElementById('switchBtn').style.display = 'block';
+  })
+  .catch(err => {
+    document.getElementById('statusLine').textContent =
+      '⚠️ Camera error: ' + (err.message || err);
+  });
+}
+
+// ── SCAN SUCCESS ───────────────────────────────────────
+function onScanSuccess(decodedText) {
+  if (!decodedText || paused) return;
+  paused = true;
+
+  const value = decodedText.trim();
+
+  // Flash result on screen
+  const box = document.getElementById('resultBox');
+  box.textContent = '✅ ' + value;
+  box.style.display = 'block';
+  document.getElementById('rescanBtn').style.display = 'block';
+  document.getElementById('statusLine').textContent = 'Tap "Scan Again" for next code';
+
+  // ── SEND RESULT TO PARENT GAS PAGE ──
+  // postMessage sends the scanned value and which field it's for
+  window.parent.postMessage({
+    type:  'SCAN_RESULT',
+    mode:  scanMode,
+    value: value
+  }, '*');
+
+  // Pause scanner so same code isn't re-read
+  try { scanner.pause(true); } catch(e) {}
+
+  // After sending bin scan, auto-switch to QR mode
+  if (scanMode === 'bin') {
+    setTimeout(() => {
+      scanMode = 'qr';
+      updateModeLabel();
+      box.style.display = 'none';
+      document.getElementById('rescanBtn').style.display = 'none';
+      resumeScan();
+    }, 1200);
+  }
+}
+
+function resumeScan() {
+  paused = false;
+  document.getElementById('resultBox').style.display  = 'none';
+  document.getElementById('rescanBtn').style.display  = 'none';
+  document.getElementById('statusLine').textContent   = 'Camera active — point at code';
+  try { scanner.resume(); } catch(e) {}
+}
+
+function switchMode() {
+  scanMode = (scanMode === 'bin') ? 'qr' : 'bin';
+  updateModeLabel();
+  resumeScan();
+}
+</script>
+</body>
+</html>
